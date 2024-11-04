@@ -41,8 +41,8 @@ const int NUM_RIGHT_ANALOG = 2;
 #define COLLISION_DETECT_THRESHOLD 10.0 // collision distance (cm) threshold, written as a float constant
 
 // Servo Motor Default Speed Settings (Straight Motion)
-#define LEFT_SERVO_DEFAULT_STRAIGHT 10     
-#define RIGHT_SERVO_DEFAULT_STRAIGHT 10    
+#define LEFT_SERVO_DEFAULT_STRAIGHT 25     
+#define RIGHT_SERVO_DEFAULT_STRAIGHT 25    
 
 /*** Global Variable Declarations *********************************************/
 
@@ -174,6 +174,9 @@ int CollisionDetect(void);      // Determine whether robot is within a certain d
 
 void PIDLineFollow(int error);
 
+// EEPROM function
+void updateEEPROM(void);        // Update EEPROM with calibration values
+
 // User led functions
 void UserLedTasks(void);        // Update the USER LED based on the current robot state
 
@@ -276,24 +279,7 @@ void Initialize(void){
   //  180 = full speed in the other direction
 
   // Initiate opto-sensor calibration if user switch pressed on reset, or if not already calibrated
-  EEPROM.begin(512);
-  EEPROM.get(0, aioMonitorFeeds.optoCal);
-  EEPROM.get(0, aioControl);
-  if((0 == aioMonitorFeeds.optoCal.isCalibrated) || (0 == digitalRead(USER_SWITCH_PIN))){
-    // Wait for user to release the button
-    while(0 == digitalRead(USER_SWITCH_PIN));
-    Serial.println("OptoSensor Calibration routine triggered");
-    // Clear EEPROM by writing a 0 to all 512 bytes
-    for (int i = 0; i < 512; i++) {
-      EEPROM.write(i, 0);
-    }
-    aioMonitorFeeds.robotState = CALIBRATE;
-    OptoCalibrate();
-    // Write calibration values to EEPROM (Flash memory)
-    EEPROM.put(0, aioMonitorFeeds.optoCal);
-    EEPROM.put(0, aioControl);
-  }
-  EEPROM.commit();
+  updateEEPROM();
   
   // mqttc Initialization: Connect to Adafruit server, subscribe for all notifications
   mqttcInitialize();
@@ -615,6 +601,7 @@ void RunningTheFairway(void){
       RobotFollowLine();
       if((event == evFoundTee) || (event == evCollisionDetect)){
         event = evNone;
+        delay(250); 
         ControlRobot("turnAround", g_lServoSpeed, g_rServoSpeed);
         g_lServoSpeed = LEFT_SERVO_DEFAULT_STRAIGHT;  // reinitialize motor speed setting for default straight speed
         g_rServoSpeed = RIGHT_SERVO_DEFAULT_STRAIGHT;
@@ -659,6 +646,21 @@ void RunningTheFairway(void){
 
 /*** Robot State Chart Behavior Functions ************************************/
 
+/*******************************************************************************
+ * Function:        void RobotWait(void)
+ *
+ * PreCondition:    None
+ *
+ * Input:           None
+ *
+ * Output:          None
+ *
+ * Side Effects:    None
+ *
+ * Overview:        Wait for pushbutton event to begin the challenge
+ *
+ * Note:            None
+ ******************************************************************************/
 void RobotWait(void){
   
   // // Sample Optosensor Inputs at regular intervals - update Adafruit IO dashboard
@@ -682,6 +684,21 @@ void RobotWait(void){
   }
 }
 
+/*******************************************************************************
+ * Function:        void RobotFindTee(void)
+ *
+ * PreCondition:    None
+ *
+ * Input:           None
+ *
+ * Output:          None
+ *
+ * Side Effects:    None
+ *
+ * Overview:        Seek the starting Tee
+ *
+ * Note:            None
+ ******************************************************************************/
 void RobotFindTee(void){  
   switch(OptoLineDetect()){
     case -1:
@@ -693,6 +710,21 @@ void RobotFindTee(void){
   }
 }
 
+/*******************************************************************************
+ * Function:        void RobotFollowLine(void)
+ *
+ * PreCondition:    None
+ *
+ * Input:           None
+ *
+ * Output:          None
+ *
+ * Side Effects:    None
+ *
+ * Overview:        Follow the line using PID control
+ *
+ * Note:            None
+ ******************************************************************************/
 void RobotFollowLine(void){
   RobotFindTee();
 
@@ -704,6 +736,21 @@ void RobotFollowLine(void){
   }  
 }
 
+/*******************************************************************************
+ * Function:        void PIDLineFollow(int error)
+ *
+ * PreCondition:    None
+ *
+ * Input:           error: error value from line detection
+ *
+ * Output:          None
+ *
+ * Side Effects:    None
+ *
+ * Overview:        PID control algorithm for line following
+ *
+ * Note:            None
+ ******************************************************************************/
 void PIDLineFollow(int error){
     P = error;
     I = I + error;
@@ -713,11 +760,12 @@ void PIDLineFollow(int error){
     Ivalue = (aioControl.Ki/pow(10,multiI))*I;
     Dvalue = (aioControl.Kd/pow(10,multiD))*D; 
 
+    Serial.print(Pvalue);
     float PIDvalue = Pvalue + Ivalue + Dvalue;
     previousError = error;
 
-    lsp =  LEFT_SERVO_DEFAULT_STRAIGHT - PIDvalue;
-    rsp = RIGHT_SERVO_DEFAULT_STRAIGHT + PIDvalue;
+    lsp =  LEFT_SERVO_DEFAULT_STRAIGHT + PIDvalue;
+    rsp = RIGHT_SERVO_DEFAULT_STRAIGHT - PIDvalue;
 
     // changew so drive right
     if (lsp > 90) lsp = 90;
@@ -727,7 +775,27 @@ void PIDLineFollow(int error){
     ControlRobot("forward", lsp, rsp);
 }
 
+/*******************************************************************************
+ * Function:        void ControlRobot(String action, float lServoSpeed, float rServoSpeed)
+ *
+ * PreCondition:    None
+ *
+ * Input:           action: "forward", "reverse", "rotateLeft", "rotateRight", "stop"
+ *                  lServoSpeed: left servo speed (0-90)
+ *                  rServoSpeed: right servo speed (0-90)
+ *
+ * Output:          None
+ *
+ * Side Effects:    None
+ *
+ * Overview:        Control the robot's motion based on the action and servo speed
+ *
+ * Note:            None
+ ******************************************************************************/
 void ControlRobot(String action, float lServoSpeed, float rServoSpeed){
+  Serial.print(lServoSpeed);
+  Serial.print("\t"); 
+  Serial.println(rServoSpeed);
   if (action == "forward") {
     // Move forward
     lServo.write(90 - lServoSpeed);
@@ -766,6 +834,36 @@ void ControlRobot(String action, float lServoSpeed, float rServoSpeed){
     // Invalid action
     Serial.println("Invalid action");
   }
+}
+
+/*******************************************************************************
+ * Function:        void updateEEPROM(void)
+ *
+ * PreCondition:    None
+ *
+ * Input:           None
+ *
+ * Output:          None
+ *
+ * Side Effects:    None
+ *
+ * Overview:        Write the PID values to EEPROM (Flash memory)
+ *
+ * Note:            None
+ ******************************************************************************/
+void updateEEPROM(void){
+  // Write the PID values to EEPROM (Flash memory)
+  EEPROM.begin(512);
+  EEPROM.get(0, aioMonitorFeeds.optoCal);
+  EEPROM.get(sizeof(aioMonitorFeeds.optoCal), aioControl);
+  // Clear EEPROM by writing a 0 to all 512 bytes
+  for (int i = 0; i < 512; i++) {
+    EEPROM.write(i, 0);
+  }
+  // Write calibration values to EEPROM (Flash memory)
+  EEPROM.put(0, aioMonitorFeeds.optoCal);
+  EEPROM.put(sizeof(aioMonitorFeeds.optoCal), aioControl);
+  EEPROM.commit();
 }
 
 /*** mqttc serialization functions ******************************************/
@@ -897,18 +995,8 @@ void eventDeserialize(void) {
         Serial.print("kd assigned: ");
         Serial.println(aioControl.Kd);
 
-        // Write the PID values to EEPROM (Flash memory)
-        EEPROM.begin(512);
-        EEPROM.get(0, aioMonitorFeeds.optoCal);
-        EEPROM.get(0, aioControl);
-        // Clear EEPROM by writing a 0 to all 512 bytes
-        for (int i = 0; i < 512; i++) {
-          EEPROM.write(i, 0);
-        }
-        // Write calibration values to EEPROM (Flash memory)
-        EEPROM.put(0, aioMonitorFeeds.optoCal);
-        EEPROM.put(0, aioControl);
-        EEPROM.commit();
+        // // Write the PID values to EEPROM (Flash memory)
+        updateEEPROM();
     }
     else {
         Serial.println("Parsing failed! Invalid Key\r\n"); // No valid keys found in JSON Message
