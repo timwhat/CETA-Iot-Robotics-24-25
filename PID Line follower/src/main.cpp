@@ -10,31 +10,31 @@
 /*** Symbolic Constants used in this module ***********************************/
 
 // Digital I/O Pin Function Assignments
-#define USER_LED_PIN 2         // OUTPUT - connected to USER LED (D1) 
-#define USER_SWITCH_PIN 32      // INPUT - connected to USER SWITCH (S2)
+#define USER_LED_PIN 2         // OUTPUT - connected to USER LED
+#define USER_SWITCH_PIN 32      // INPUT - connected to USER SWITCH
 #define LEFT_MOTOR_PWM_PIN 33    // OUTPUT - connected to motor controller "S2" input ("Left" Motor)
 #define RIGHT_MOTOR_PWM_PIN 25   // OUTPUT - connected to motor controller "S1" input ("Right" Motor)
-#define HCSR04_TRIGGER_PIN 27   // DIGITAL OUTPUT - connected to HCSR04 Trigger pin
-#define HCSR04_ECHO_PIN 26      // DIGITAL INPUT - connected to HCSR04 Echo pin
+#define HCSR04_TRIGGER_PIN 26   // DIGITAL OUTPUT - connected to HCSR04 Trigger pin
+#define HCSR04_ECHO_PIN 27      // DIGITAL INPUT - connected to HCSR04 Echo pin
 
 // Opto Sensor Configs
 #define OPTO_CALIBRATE_INTERVAL 10000   // averaging time for opto calibration (in mS)
-QTRSensors qtra;
-// QTRSensors qtrrc;
+// QTRSensors qtra;
+QTRSensors qtrrc;
 
 // Define the pin numbers for the analog sensors
-const int analogSensorCount = 4;
-const uint8_t analogPins[analogSensorCount] = {36, 39, 34, 35};  // Analog pins for 4 analog sensors (2 left, 2 right)
+const int analogSensorCount = 0;
+const uint8_t analogPins[analogSensorCount] = {};  // Analog pins for analog sensors (half left, half right)
 
-// Define the pin numbers for the HY-S301 sensor array
+// Define the pin numbers
 const int digitalSensorCount = 8;
-const uint8_t digitalPins[digitalSensorCount] = {22, 21, 19, 18, 5, 17, 16, 4};  // Analog pins for HY-S301 sensors
+const uint8_t digitalPins[digitalSensorCount] = {23, 22, 21, 19, 18, 17, 16, 4};  
 
-const int SensorCount = analogSensorCount + digitalSensorCount;
+const int sensorCount = analogSensorCount + digitalSensorCount;
 
-const int NUM_LEFT_ANALOG = 2;
+const int NUM_LEFT_ANALOG = 0;
 const int NUM_DIGITAL = 8;
-const int NUM_RIGHT_ANALOG = 2;
+const int NUM_RIGHT_ANALOG = 0;
 
 // Ultrasonic collision sensor definitions
 #define COLLISION_SAMPLE_INTERVAL 50   // sample interval for collision sensor
@@ -57,7 +57,7 @@ const long collisionDistanceSampleInterval = COLLISION_SAMPLE_INTERVAL;
 
 typedef struct{
   int isCalibrated;
-  uint16_t threshold[SensorCount];
+  uint16_t threshold[sensorCount];
 } OPTO_CAL;
 
 // define some robot states
@@ -65,7 +65,7 @@ enum ROBOT_STATE {CALIBRATE=0, CALIBRATE_BLACK, IDLE, SEEK_START, RUN1, RUN2, RU
 
 // Adafruit "monitor" group variables
 typedef struct{
-  uint16_t sensorValues[SensorCount];
+  uint16_t sensorValues[sensorCount];
   float position;
   OPTO_CAL optoCal;                     // create a structure to store runtime optosensor trip values
   enum ROBOT_STATE robotState = IDLE;   // declare & initialize a variable that holds the current state
@@ -84,7 +84,7 @@ typedef struct {
 AIO_CONTROL aioControl;
 
 // Weights for each sensor
-const int weights[] = {-6, -5, -4, -3, -2, -1, 1, 2, 3, 4, 5, 6};
+const int weights[] = {-6, -4, -2, -1, 1, 2, 4, 6};
 
 // PID STUFF
 uint8_t multiP = 1;
@@ -99,8 +99,7 @@ float Dvalue;
 
 int val, cnt = 0, v[3];
 
-int P, I, D, previousError, PIDvalue;//, error;
-int lsp, rsp;
+int P, I, D, previousError;//, PIDvalue;//, error;
 
 // variables that control how often "aioMonitorFeeds" are published to the broker
 unsigned long aioMonitorFeedsCurrentSampleTime;
@@ -175,7 +174,7 @@ int CollisionDetect(void);      // Determine whether robot is within a certain d
 void PIDLineFollow(int error);
 
 // EEPROM function
-void updateEEPROM(void);        // Update EEPROM with calibration values
+void updateEEPROM(int type);        // Update EEPROM with calibration values
 
 // User led functions
 void UserLedTasks(void);        // Update the USER LED based on the current robot state
@@ -241,9 +240,11 @@ void loop() {
 
 void Initialize(void){
 
-  // Initialize sensors
-  qtra.setTypeAnalog();
-  qtra.setSensorPins(analogPins, analogSensorCount);
+  // // Initialize sensors
+  // qtra.setTypeAnalog();
+  // qtra.setSensorPins(analogPins, analogSensorCount);
+  qtrrc.setTypeRC();
+  qtrrc.setSensorPins(digitalPins, digitalSensorCount);
 
   // Initialize digital sensor pins as inputs
   for (int i = 0; i < digitalSensorCount; i++) {
@@ -279,7 +280,10 @@ void Initialize(void){
   //  180 = full speed in the other direction
 
   // Initiate opto-sensor calibration if user switch pressed on reset, or if not already calibrated
-  updateEEPROM();
+  updateEEPROM(0);
+  // aioControl.Kp = 100.0;
+  // aioControl.Ki = 0.0;
+  // aioControl.Kd = 0.0;
   
   // mqttc Initialization: Connect to Adafruit server, subscribe for all notifications
   mqttcInitialize();
@@ -321,37 +325,36 @@ void Initialize(void){
 
 void OptoCalibrate(void) {
 
+    int i; 
     // TODO: add while thing so it wont do when active
 
-    // analogRead() takes about 0.1 ms on an AVR.
-    // 0.1 ms per sensor * 4 samples per sensor read (default) * 6 sensors
-    // * 10 reads per calibrate() call = ~24 ms per calibrate() call.
-    // Call calibrate() 400 times to make calibration take about 10 seconds.
+    // For analog sensors:
 
-    for (uint16_t i = 0; i < (OPTO_CALIBRATE_INTERVAL / 25); i++)
-    {
-        qtra.calibrate();
-    }
+    // for (uint16_t i = 0; i < (OPTO_CALIBRATE_INTERVAL / 25); i++)
+    // {
+    //     qtra.calibrate();
+    // }
     
     // For digital sensors:
-    // Here we set a static threshold. If your digital sensors output directly high or low, you might not need calibration.
-    // Instead, ensure that you read the sensors in various conditions (e.g., over line and off line) to determine typical high/low states.
-
-    for (int i = 0; i < NUM_DIGITAL; i++) {
-        // Read each digital sensor and determine a threshold based on empirical data or expected high/low values
-        // For example, you might use a pre-determined threshold if your sensors have a defined behavior.
-        aioMonitorFeeds.optoCal.threshold[NUM_LEFT_ANALOG + i] = 1; //(digitalRead(digitalPins[i]) == HIGH) ? 1 : 0;
+    
+    // Calibrate the QTR sensor with the emitters on
+    for (i = 0; i < (OPTO_CALIBRATE_INTERVAL / 25); i++) {
+      qtrrc.calibrate(QTRReadMode::On);
     }
 
-    // Place QTR sensor readings into the final sensorValues array
-    for (int i = 0; i < NUM_LEFT_ANALOG; i++) {
-      aioMonitorFeeds.optoCal.threshold[i] = (qtra.calibrationOn.minimum[i] + qtra.calibrationOn.maximum[i])/2;  // Left analog sensors
-    }
+    for (i = 0; i < NUM_DIGITAL; i++) {
+      aioMonitorFeeds.optoCal.threshold[i] = (qtrrc.calibrationOn.minimum[i] + qtrrc.calibrationOn.maximum[i])/2;
+    }        
 
-    // Read remaining analog sensors (right side) and place them into the final sensorValues array
-    for (int i = 0; i < NUM_RIGHT_ANALOG; i++) {
-      aioMonitorFeeds.optoCal.threshold[NUM_LEFT_ANALOG + NUM_DIGITAL + i] = (qtra.calibrationOn.minimum[NUM_LEFT_ANALOG + i] + qtra.calibrationOn.maximum[NUM_LEFT_ANALOG + i])/2;  // Right analog sensors
-    }
+    // // Place QTR sensor readings into the final sensorValues array
+    // for (int i = 0; i < NUM_LEFT_ANALOG; i++) {
+    //   aioMonitorFeeds.optoCal.threshold[i] = (qtra.calibrationOn.minimum[i] + qtra.calibrationOn.maximum[i])/2;  // Left analog sensors
+    // }
+
+    // // Read remaining analog sensors (right side) and place them into the final sensorValues array
+    // for (int i = 0; i < NUM_RIGHT_ANALOG; i++) {
+    //   aioMonitorFeeds.optoCal.threshold[NUM_LEFT_ANALOG + NUM_DIGITAL + i] = (qtra.calibrationOn.minimum[NUM_LEFT_ANALOG + i] + qtra.calibrationOn.maximum[NUM_LEFT_ANALOG + i])/2;  // Right analog sensors
+    // }
     
     Serial.println("Calibration complete.");
 }
@@ -467,7 +470,7 @@ int SwitchWasPressed(void){
  * PreCondition:    None
  *
  * Input:           None
- *
+ * 
  * Output:          0 if no sensors detect a line
  *                  -1 if all sensors detect the line
  *                  everything else around the middle
@@ -482,31 +485,34 @@ int SwitchWasPressed(void){
  ******************************************************************************/
 
 int OptoLineDetect(void) {
-  uint16_t tempQTRAValues[analogSensorCount];  // Temporary array for QTR sensor readings
-  uint8_t tempQTRRCValues[digitalSensorCount];  // Temporary array for digital sensor readings
+  // uint16_t tempQTRAValues[analogSensorCount];  // Temporary array for QTR sensor readings
+  uint16_t tempQTRRCValues[digitalSensorCount];  // Temporary array for digital sensor readings
 
-  // Read analog sensors
-  qtra.read(tempQTRAValues);
+  // // Read analog sensors
+  // qtra.read(tempQTRAValues);
 
   int i;
 
   // Read digital sensors
-  for (i = 0; i < digitalSensorCount; i++) tempQTRRCValues[i] = digitalRead(digitalPins[i]); // Read digital sensors directly
+  // for (i = 0; i < digitalSensorCount; i++) tempQTRRCValues[i] = digitalRead(digitalPins[i]); // Read digital sensors directly
+  qtrrc.read(tempQTRRCValues, QTRReadMode::On); // Read digital sensors with emitters on
 
   // Place sensor readings into the final sensorValues array
   // Left analog sensors
-  for (i = 0; i < NUM_LEFT_ANALOG; i++) aioMonitorFeeds.sensorValues[i] = tempQTRAValues[i];
+  // for (i = 0; i < NUM_LEFT_ANALOG; i++) aioMonitorFeeds.sensorValues[i] = tempQTRAValues[i];
+
+  
   
   // Digital sensors
   for (i = 0; i < NUM_DIGITAL; i++) aioMonitorFeeds.sensorValues[NUM_LEFT_ANALOG + i] = tempQTRRCValues[i];
   
   // Right analog sensors
-  for (i = 0; i < NUM_RIGHT_ANALOG; i++) aioMonitorFeeds.sensorValues[NUM_LEFT_ANALOG + NUM_DIGITAL + i] = tempQTRAValues[NUM_LEFT_ANALOG + i];
+  // for (i = 0; i < NUM_RIGHT_ANALOG; i++) aioMonitorFeeds.sensorValues[NUM_LEFT_ANALOG + NUM_DIGITAL + i] = tempQTRAValues[NUM_LEFT_ANALOG + i];
   
   int sumWeights = 0, sumValues = 0;
 
   // Calculate weighted average for line position based on absolute detection
-  for (i = 0; i < SensorCount; i++) {
+  for (i = 0; i < sensorCount; i++) {
     if(aioMonitorFeeds.sensorValues[i] >= aioMonitorFeeds.optoCal.threshold[i]) {
       sumWeights += weights[i];
       sumValues++;
@@ -518,7 +524,7 @@ int OptoLineDetect(void) {
   else aioMonitorFeeds.position = 0;
 
   // Check sensor detection status
-  if (sumValues == SensorCount) return -1; // All sensors detect the line
+  if (sumValues == sensorCount) return -1; // All sensors detect the line
   else if (sumValues == 0) return 0;     // No sensors detect the line
   else return 1;                         // Some sensors detect the line
 }
@@ -752,27 +758,50 @@ void RobotFollowLine(void){
  * Note:            None
  ******************************************************************************/
 void PIDLineFollow(int error){
-    P = error;
-    I = I + error;
-    D = error - previousError;
-    
-    Pvalue = (aioControl.Kp/pow(10,multiP))*P;
-    Ivalue = (aioControl.Ki/pow(10,multiI))*I;
-    Dvalue = (aioControl.Kd/pow(10,multiD))*D; 
+  Serial.print(error);
+  P = error;
+  I = I + error;
+  D = error - previousError;
+  
+  // Pvalue = (aioControl.Kp/pow(10,multiP))*P;
+  // Ivalue = (aioControl.Ki/pow(10,multiI))*I;
+  // Dvalue = (aioControl.Kd/pow(10,multiD))*D; 
 
-    Serial.print(Pvalue);
-    float PIDvalue = Pvalue + Ivalue + Dvalue;
-    previousError = error;
+  Pvalue = aioControl.Kp*P;
+  Ivalue = aioControl.Ki*I;
+  Dvalue = aioControl.Kd*D;
 
-    lsp =  LEFT_SERVO_DEFAULT_STRAIGHT + PIDvalue;
-    rsp = RIGHT_SERVO_DEFAULT_STRAIGHT - PIDvalue;
+  Serial.print("\t");
+  Serial.print(Pvalue);
+  Serial.print("\t");
+  Serial.print(Ivalue);
+  Serial.print("\t");
+  Serial.print(Dvalue);
 
-    // changew so drive right
-    if (lsp > 90) lsp = 90;
-    if (lsp < 0) lsp = 0;
-    if (rsp > 90) rsp = 90;
-    if (rsp < 0) rsp = 0;
-    ControlRobot("forward", lsp, rsp);
+  Serial.print("\t");
+  Serial.print(aioControl.Kp);
+  Serial.print("\t");
+  Serial.print(aioControl.Ki);
+  Serial.print("\t");
+  Serial.print(aioControl.Kd);
+  
+  float PIDvalue = Pvalue + Ivalue + Dvalue;
+  previousError = error;
+
+  Serial.print("\t");
+  Serial.print(PIDvalue);
+  Serial.print("\n");
+  
+  int lsp =  LEFT_SERVO_DEFAULT_STRAIGHT + PIDvalue;
+  int rsp = RIGHT_SERVO_DEFAULT_STRAIGHT - PIDvalue;
+
+  // changew so drive right
+  if (lsp > 90) lsp = 90;
+  if (lsp < 0) lsp = 0;
+  if (rsp > 90) rsp = 90;
+  if (rsp < 0) rsp = 0;
+
+  ControlRobot("forward", lsp, rsp);
 }
 
 /*******************************************************************************
@@ -793,9 +822,9 @@ void PIDLineFollow(int error){
  * Note:            None
  ******************************************************************************/
 void ControlRobot(String action, float lServoSpeed, float rServoSpeed){
-  Serial.print(lServoSpeed);
-  Serial.print("\t"); 
-  Serial.println(rServoSpeed);
+  // Serial.print(lServoSpeed);
+  // Serial.print("\t"); 
+  // Serial.println(rServoSpeed);
   if (action == "forward") {
     // Move forward
     lServo.write(90 - lServoSpeed);
@@ -841,7 +870,8 @@ void ControlRobot(String action, float lServoSpeed, float rServoSpeed){
  *
  * PreCondition:    None
  *
- * Input:           None
+ * Input:           0 to save calibration values to EEPROM
+ *                 1 to save PID values to EEPROM
  *
  * Output:          None
  *
@@ -851,18 +881,48 @@ void ControlRobot(String action, float lServoSpeed, float rServoSpeed){
  *
  * Note:            None
  ******************************************************************************/
-void updateEEPROM(void){
-  // Write the PID values to EEPROM (Flash memory)
+
+
+// checks if 0 is pressed
+  // load values ffrom EEPROM
+
+// save values to EEPROM
+
+
+
+void updateEEPROM(int type){
   EEPROM.begin(512);
-  EEPROM.get(0, aioMonitorFeeds.optoCal);
-  EEPROM.get(sizeof(aioMonitorFeeds.optoCal), aioControl);
-  // Clear EEPROM by writing a 0 to all 512 bytes
-  for (int i = 0; i < 512; i++) {
-    EEPROM.write(i, 0);
+  if (type == 0) {
+    EEPROM.get(0, aioMonitorFeeds.optoCal);
+    EEPROM.get(sizeof(aioMonitorFeeds.optoCal), aioControl);
+    for (int i = 0; i < 512; i++) {
+      EEPROM.write(i, 0);
+    }
+    if((0 == aioMonitorFeeds.optoCal.isCalibrated) || (0 == digitalRead(USER_SWITCH_PIN))){
+      // Wait for user to release the button
+      while (0 == digitalRead(USER_SWITCH_PIN));
+      Serial.println("OptoSensor Calibration routine triggered");
+      // Clear EEPROM by writing a 0 to all 512 bytes
+      for (int i = 0; i < 512; i++) {
+        EEPROM.write(i, 0);
+      }
+      aioMonitorFeeds.optoCal.isCalibrated = 1;
+      aioMonitorFeeds.robotState = CALIBRATE_BLACK;
+      OptoCalibrate();
+    }
+    // Write calibration values to EEPROM (Flash memory)
+    EEPROM.put(0, aioMonitorFeeds.optoCal);
+    EEPROM.put(sizeof(aioMonitorFeeds.optoCal), aioControl);
+  } else if (type == 1) {
+    EEPROM.get(0, aioMonitorFeeds.optoCal);
+    // Clear EEPROM by writing a 0 to all 512 bytes
+    for (int i = 0; i < 512; i++) {
+      EEPROM.write(i, 0);
+    }
+    // Write the PID values to EEPROM (Flash memory)
+    EEPROM.put(0, aioMonitorFeeds.optoCal);
+    EEPROM.put(sizeof(aioMonitorFeeds.optoCal), aioControl);
   }
-  // Write calibration values to EEPROM (Flash memory)
-  EEPROM.put(0, aioMonitorFeeds.optoCal);
-  EEPROM.put(sizeof(aioMonitorFeeds.optoCal), aioControl);
   EEPROM.commit();
 }
 
@@ -878,12 +938,12 @@ void updateEEPROM(void){
 
 
 String aioMonitorFeedsSerialize(void){
-  // for (int i = 0; i < SensorCount; i++) {
+  // for (int i = 0; i < sensorCount; i++) {
   //   Serial.print(aioMonitorFeeds.sensorValues[i]);
   //   Serial.print("\t");
   // }
   // Serial.println();
-  // for (int i = 0; i < SensorCount; i++) {
+  // for (int i = 0; i < sensorCount; i++) {
   //   Serial.print(aioMonitorFeeds.optoCal.threshold[i]);
   //   Serial.print("\t");
   // }
@@ -895,7 +955,7 @@ String aioMonitorFeedsSerialize(void){
   jsonSerializedOutput = "";
 
   jsonSerializedOutput += "{\"feeds\": {";
-  // for(int i = 0; i < SensorCount; i++){
+  // for(int i = 0; i < sensorCount; i++){
   //   jsonSerializedOutput += "\"sensor_value ";
   //   jsonSerializedOutput += i;
   //   jsonSerializedOutput += "\": ";
@@ -903,7 +963,7 @@ String aioMonitorFeedsSerialize(void){
   //   jsonSerializedOutput += ", ";
   // }
   // jsonSerializedOutput += "\n";
-  // for(int i = 0; i < SensorCount; i++){
+  // for(int i = 0; i < sensorCount; i++){
   //   jsonSerializedOutput += "\"sensor_trip_value ";
   //   jsonSerializedOutput += i;
   //   jsonSerializedOutput += "\": ";
@@ -996,7 +1056,7 @@ void eventDeserialize(void) {
         Serial.println(aioControl.Kd);
 
         // // Write the PID values to EEPROM (Flash memory)
-        updateEEPROM();
+        updateEEPROM(1);
     }
     else {
         Serial.println("Parsing failed! Invalid Key\r\n"); // No valid keys found in JSON Message
