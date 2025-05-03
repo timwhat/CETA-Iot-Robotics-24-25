@@ -41,8 +41,8 @@ const int NUM_RIGHT_ANALOG = 0;
 #define COLLISION_DETECT_THRESHOLD 10.0 // collision distance (cm) threshold, written as a float constant
 
 // Servo Motor Default Speed Settings (Straight Motion)
-#define LEFT_SERVO_DEFAULT_STRAIGHT 25     
-#define RIGHT_SERVO_DEFAULT_STRAIGHT 25    
+#define LEFT_SERVO_DEFAULT_STRAIGHT 45     
+#define RIGHT_SERVO_DEFAULT_STRAIGHT 45    
 
 /*** Global Variable Declarations *********************************************/
 
@@ -84,7 +84,7 @@ typedef struct {
 AIO_CONTROL aioControl;
 
 // Weights for each sensor
-const int weights[] = {-6, -4, -2, -1, 1, 2, 4, 6};
+const int weights[] = {-8, -6, -4, -2, 2, 4, 6, 8};
 
 // PID STUFF
 uint8_t multiP = 1;
@@ -105,6 +105,10 @@ int P, I, D, previousError;//, PIDvalue;//, error;
 unsigned long aioMonitorFeedsCurrentSampleTime;
 unsigned long aioMonitorFeedsPreviousSampleTime;
 const long aioMonitorFeedsSampleInterval = 4000;   // "aioMonitorFeeds" update interval (in mS)
+
+unsigned long serialMonitorCurrentSampleTime;
+unsigned long serialMonitorPreviousSampleTime;
+const long serialMonitorSampleInterval = 750;   // Serial Monitor update interval (in mS)
 
 // declare status message string to be published to Node-Red dashboard
 String robotMessage;
@@ -171,7 +175,7 @@ int OptoLineDetect(void);
 // collision detection function
 int CollisionDetect(void);      // Determine whether robot is within a certain distance from a target
 
-void PIDLineFollow(int error);
+void PIDLineFollow(float error);
 
 // EEPROM function
 void updateEEPROM(int type);        // Update EEPROM with calibration values
@@ -179,7 +183,9 @@ void updateEEPROM(int type);        // Update EEPROM with calibration values
 // User led functions
 void UserLedTasks(void);        // Update the USER LED based on the current robot state
 
+
 // serialization functions for publish ("monitor") variables
+String serialMonitorDebug(void); // serialize "aioMonitorFeeds" data structure for Serial Monitor
 String aioMonitorFeedsSerialize(void);   // serialize "aioMonitorFeeds" data structure for publish
 
 // deserialization functions for subscribe ("control") variables
@@ -212,6 +218,13 @@ void loop() {
     // send current values to the Dashboard
     Serial.println(aioMonitorFeedsSerialize());
     mqttcTx(PUB_TOPIC_AIO_MONITOR_FEEDS, aioMonitorFeedsSerialize());
+  }
+
+  // Serial Monitor tasks
+  serialMonitorCurrentSampleTime = millis();
+  if ((serialMonitorCurrentSampleTime - serialMonitorPreviousSampleTime) >= serialMonitorSampleInterval) {
+    serialMonitorPreviousSampleTime = serialMonitorCurrentSampleTime;
+    // Serial.println(serialMonitorDebug());
   }
   
   // Line-following state machine tasks
@@ -734,6 +747,14 @@ void RobotFindTee(void){
 void RobotFollowLine(void){
   RobotFindTee();
 
+  while(OptoLineDetect == 0){
+    if(previousError>0){       //Turn left if the line was to the left before
+      ControlRobot("rotateLeft", g_lServoSpeed, g_rServoSpeed);
+    }
+    else{
+      ControlRobot("rotateRight", g_lServoSpeed, g_rServoSpeed); // Else turn right
+  }}
+
   PIDLineFollow(aioMonitorFeeds.position);
 
   if(CollisionDetect()){
@@ -743,7 +764,7 @@ void RobotFollowLine(void){
 }
 
 /*******************************************************************************
- * Function:        void PIDLineFollow(int error)
+ * Function:        void PIDLineFollow(float error)
  *
  * PreCondition:    None
  *
@@ -757,7 +778,7 @@ void RobotFollowLine(void){
  *
  * Note:            None
  ******************************************************************************/
-void PIDLineFollow(int error){
+void PIDLineFollow(float error){
   Serial.print(error);
   P = error;
   I = I + error;
@@ -926,6 +947,17 @@ void updateEEPROM(int type){
   EEPROM.commit();
 }
 
+String serialMonitorDebug(void){
+  String serialOutput;
+  for (int i = 0; i < sensorCount; i++) {
+    serialOutput += aioMonitorFeeds.sensorValues[i];
+    serialOutput += "\t";
+  }
+
+  return serialOutput;
+}
+
+
 /*** mqttc serialization functions ******************************************/
 
 // aioMonitorFeedsSerialize()
@@ -938,10 +970,6 @@ void updateEEPROM(int type){
 
 
 String aioMonitorFeedsSerialize(void){
-  // for (int i = 0; i < sensorCount; i++) {
-  //   Serial.print(aioMonitorFeeds.sensorValues[i]);
-  //   Serial.print("\t");
-  // }
   // Serial.println();
   // for (int i = 0; i < sensorCount; i++) {
   //   Serial.print(aioMonitorFeeds.optoCal.threshold[i]);
