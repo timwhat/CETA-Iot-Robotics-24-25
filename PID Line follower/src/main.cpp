@@ -18,13 +18,13 @@
 #define HCSR04_ECHO_PIN 27      // DIGITAL INPUT - connected to HCSR04 Echo pin
 
 // Opto Sensor Configs
-#define OPTO_CALIBRATE_INTERVAL 10000   // averaging time for opto calibration (in mS)
-// QTRSensors qtra;
+#define OPTO_CALIBRATE_INTERVAL 2500   // averaging time for opto calibration (in mS)
+QTRSensors qtra;
 QTRSensors qtrrc;
 
 // Define the pin numbers for the analog sensors
-const int analogSensorCount = 0;
-const uint8_t analogPins[analogSensorCount] = {};  // Analog pins for analog sensors (half left, half right)
+const int analogSensorCount = 4;
+const uint8_t analogPins[analogSensorCount] = {36, 39, 34, 35};  // Analog pins for analog sensors (half left, half right)
 
 // Define the pin numbers
 const int digitalSensorCount = 8;
@@ -32,9 +32,9 @@ const uint8_t digitalPins[digitalSensorCount] = {23, 22, 21, 19, 18, 17, 16, 4};
 
 const int sensorCount = analogSensorCount + digitalSensorCount;
 
-const int NUM_LEFT_ANALOG = 0;
+const int NUM_LEFT_ANALOG = 2;
 const int NUM_DIGITAL = 8;
-const int NUM_RIGHT_ANALOG = 0;
+const int NUM_RIGHT_ANALOG = 2;
 
 // Ultrasonic collision sensor definitions
 #define COLLISION_SAMPLE_INTERVAL 50   // sample interval for collision sensor
@@ -84,7 +84,7 @@ typedef struct {
 AIO_CONTROL aioControl;
 
 // Weights for each sensor
-const int weights[] = {-8, -6, -4, -2, 2, 4, 6, 8};
+const int weights[] = {-12, -10, -8, -6, -4, -2, 2, 4, 6, 8, 10, 12};
 
 // PID STUFF
 uint8_t multiP = 1;
@@ -172,6 +172,8 @@ int SwitchWasPressed(void);     // Detect if switch S1 was pressed (push-release
 void OptoCalibrate(void);
 int OptoLineDetect(void);
 
+int OptoLineDetectValue;
+
 // collision detection function
 int CollisionDetect(void);      // Determine whether robot is within a certain distance from a target
 
@@ -224,7 +226,7 @@ void loop() {
   serialMonitorCurrentSampleTime = millis();
   if ((serialMonitorCurrentSampleTime - serialMonitorPreviousSampleTime) >= serialMonitorSampleInterval) {
     serialMonitorPreviousSampleTime = serialMonitorCurrentSampleTime;
-    // Serial.println(serialMonitorDebug());
+    Serial.println(serialMonitorDebug());
   }
   
   // Line-following state machine tasks
@@ -254,8 +256,8 @@ void loop() {
 void Initialize(void){
 
   // // Initialize sensors
-  // qtra.setTypeAnalog();
-  // qtra.setSensorPins(analogPins, analogSensorCount);
+  qtra.setTypeAnalog();
+  qtra.setSensorPins(analogPins, analogSensorCount);
   qtrrc.setTypeRC();
   qtrrc.setSensorPins(digitalPins, digitalSensorCount);
 
@@ -343,31 +345,42 @@ void OptoCalibrate(void) {
 
     // For analog sensors:
 
-    // for (uint16_t i = 0; i < (OPTO_CALIBRATE_INTERVAL / 25); i++)
-    // {
-    //     qtra.calibrate();
-    // }
-    
-    // For digital sensors:
-    
-    // Calibrate the QTR sensor with the emitters on
-    for (i = 0; i < (OPTO_CALIBRATE_INTERVAL / 25); i++) {
+    ControlRobot("reverse", 10, 10); // rotate right to get a good reading
+
+    for (uint16_t i = 0; i < (OPTO_CALIBRATE_INTERVAL / 25); i++)
+    {
+      qtra.calibrate();
       qtrrc.calibrate(QTRReadMode::On);
     }
 
+    ControlRobot("stop"); // stop the robot
+    
+    // For digital sensors:
+    
+    // // Calibrate the QTR sensor with the emitters on
+    // for (i = 0; i < (OPTO_CALIBRATE_INTERVAL / 25); i++) {
+    //   qtrrc.calibrate(QTRReadMode::On);
+    // }
+
+    // Place QTR sensor readings into the final sensorValues array
+    for (i = 0; i < NUM_LEFT_ANALOG; i++) {
+      aioMonitorFeeds.optoCal.threshold[i] = (qtra.calibrationOn.minimum[i] + qtra.calibrationOn.maximum[i])/2;  // Left analog sensors
+    }
+
     for (i = 0; i < NUM_DIGITAL; i++) {
-      aioMonitorFeeds.optoCal.threshold[i] = (qtrrc.calibrationOn.minimum[i] + qtrrc.calibrationOn.maximum[i])/2;
+      aioMonitorFeeds.optoCal.threshold[NUM_LEFT_ANALOG + i] = (qtrrc.calibrationOn.minimum[i] + qtrrc.calibrationOn.maximum[i])/2;
     }        
 
-    // // Place QTR sensor readings into the final sensorValues array
-    // for (int i = 0; i < NUM_LEFT_ANALOG; i++) {
-    //   aioMonitorFeeds.optoCal.threshold[i] = (qtra.calibrationOn.minimum[i] + qtra.calibrationOn.maximum[i])/2;  // Left analog sensors
-    // }
+    // Read remaining analog sensors (right side) and place them into the final sensorValues array
+    for (i = 0; i < NUM_RIGHT_ANALOG; i++) {
+      aioMonitorFeeds.optoCal.threshold[NUM_LEFT_ANALOG + NUM_DIGITAL + i] = (qtra.calibrationOn.minimum[NUM_LEFT_ANALOG + i] + qtra.calibrationOn.maximum[NUM_LEFT_ANALOG + i])/2;  // Right analog sensors
+    }
 
-    // // Read remaining analog sensors (right side) and place them into the final sensorValues array
-    // for (int i = 0; i < NUM_RIGHT_ANALOG; i++) {
-    //   aioMonitorFeeds.optoCal.threshold[NUM_LEFT_ANALOG + NUM_DIGITAL + i] = (qtra.calibrationOn.minimum[NUM_LEFT_ANALOG + i] + qtra.calibrationOn.maximum[NUM_LEFT_ANALOG + i])/2;  // Right analog sensors
-    // }
+    Serial.print("Opto calibration values: ");
+    for (i = 0; i < sensorCount; i++) {
+      Serial.print(aioMonitorFeeds.optoCal.threshold[i]);
+      Serial.print(" ");
+    }
     
     Serial.println("Calibration complete.");
 }
@@ -498,11 +511,11 @@ int SwitchWasPressed(void){
  ******************************************************************************/
 
 int OptoLineDetect(void) {
-  // uint16_t tempQTRAValues[analogSensorCount];  // Temporary array for QTR sensor readings
+  uint16_t tempQTRAValues[analogSensorCount];  // Temporary array for QTR sensor readings
   uint16_t tempQTRRCValues[digitalSensorCount];  // Temporary array for digital sensor readings
 
   // // Read analog sensors
-  // qtra.read(tempQTRAValues);
+  qtra.read(tempQTRAValues);
 
   int i;
 
@@ -512,17 +525,15 @@ int OptoLineDetect(void) {
 
   // Place sensor readings into the final sensorValues array
   // Left analog sensors
-  // for (i = 0; i < NUM_LEFT_ANALOG; i++) aioMonitorFeeds.sensorValues[i] = tempQTRAValues[i];
-
-  
+  for (i = 0; i < NUM_LEFT_ANALOG; i++) aioMonitorFeeds.sensorValues[i] = tempQTRAValues[i];
   
   // Digital sensors
   for (i = 0; i < NUM_DIGITAL; i++) aioMonitorFeeds.sensorValues[NUM_LEFT_ANALOG + i] = tempQTRRCValues[i];
   
   // Right analog sensors
-  // for (i = 0; i < NUM_RIGHT_ANALOG; i++) aioMonitorFeeds.sensorValues[NUM_LEFT_ANALOG + NUM_DIGITAL + i] = tempQTRAValues[NUM_LEFT_ANALOG + i];
+  for (i = 0; i < NUM_RIGHT_ANALOG; i++) aioMonitorFeeds.sensorValues[NUM_LEFT_ANALOG + NUM_DIGITAL + i] = tempQTRAValues[NUM_LEFT_ANALOG + i];
   
-  int sumWeights = 0, sumValues = 0;
+  int sumWeights = 0, sumValues = 0, sumValuesDigital = 0;
 
   // Calculate weighted average for line position based on absolute detection
   for (i = 0; i < sensorCount; i++) {
@@ -532,12 +543,19 @@ int OptoLineDetect(void) {
     }
   }
 
+  for (i = 0; i < NUM_DIGITAL; i++) {
+    if(aioMonitorFeeds.sensorValues[i + NUM_LEFT_ANALOG] >= aioMonitorFeeds.optoCal.threshold[i + NUM_LEFT_ANALOG]) {
+      sumValuesDigital++;
+    }
+  }
+
   // Calculate the weighted average (error function)
   if (sumValues != 0) aioMonitorFeeds.position = (float)sumWeights / sumValues;
   else aioMonitorFeeds.position = 0;
 
   // Check sensor detection status
-  if (sumValues == sensorCount) return -1; // All sensors detect the line
+  // if (sumValues == sensorCount) return -1; // All sensors detect the line
+  if (sumValuesDigital == NUM_DIGITAL) return -1; // All digital sensors detect the line
   else if (sumValues == 0) return 0;     // No sensors detect the line
   else return 1;                         // Some sensors detect the line
 }
@@ -593,6 +611,7 @@ int CollisionDetect(void){
 
 void RunningTheFairway(void){
   UserLedTasks();                                     // update user led based on state
+  OptoLineDetectValue = OptoLineDetect();                                   // sample opto sensors
   switch(aioMonitorFeeds.robotState){
     case IDLE:
       RobotWait();
@@ -620,7 +639,7 @@ void RunningTheFairway(void){
       RobotFollowLine();
       if((event == evFoundTee) || (event == evCollisionDetect)){
         event = evNone;
-        delay(250); 
+        // delay(50); 
         ControlRobot("turnAround", g_lServoSpeed, g_rServoSpeed);
         g_lServoSpeed = LEFT_SERVO_DEFAULT_STRAIGHT;  // reinitialize motor speed setting for default straight speed
         g_rServoSpeed = RIGHT_SERVO_DEFAULT_STRAIGHT;
@@ -632,6 +651,7 @@ void RunningTheFairway(void){
       RobotFollowLine();
       if(event == evFoundTee){
         event = evNone;
+        // delay(50); 
         ControlRobot("turnAround", g_lServoSpeed, g_rServoSpeed);
         g_lServoSpeed = LEFT_SERVO_DEFAULT_STRAIGHT;  // reinitialize motor speed setting for default straight speed
         g_rServoSpeed = RIGHT_SERVO_DEFAULT_STRAIGHT;
@@ -643,6 +663,7 @@ void RunningTheFairway(void){
       RobotFollowLine();
       if((event == evFoundTee) || (event == evCollisionDetect)){
         event = evNone;
+        // delay(50); 
         ControlRobot("turnAround", g_lServoSpeed, g_rServoSpeed);
         g_lServoSpeed = LEFT_SERVO_DEFAULT_STRAIGHT;  // reinitialize motor speed setting for default straight speed
         g_rServoSpeed = RIGHT_SERVO_DEFAULT_STRAIGHT;
@@ -654,6 +675,8 @@ void RunningTheFairway(void){
       RobotFollowLine();
       if(event == evFoundTee){
         event = evNone;
+        ControlRobot("forward", g_lServoSpeed, g_rServoSpeed);
+        delay(250);
         ControlRobot("stop");
         aioMonitorFeeds.robotState = IDLE;
       }
@@ -683,7 +706,7 @@ void RunningTheFairway(void){
 void RobotWait(void){
   
   // // Sample Optosensor Inputs at regular intervals - update Adafruit IO dashboard
-  OptoLineDetect();
+  // OptoLineDetect();
   
   // Look for Events
   SwitchTasks();                              // sample user switch
@@ -719,7 +742,7 @@ void RobotWait(void){
  * Note:            None
  ******************************************************************************/
 void RobotFindTee(void){  
-  switch(OptoLineDetect()){
+  switch(OptoLineDetectValue){
     case -1:
       event = evFoundTee;       // Left, Middle & Right detect a line
       break;
@@ -747,13 +770,15 @@ void RobotFindTee(void){
 void RobotFollowLine(void){
   RobotFindTee();
 
-  while(OptoLineDetect == 0){
-    if(previousError>0){       //Turn left if the line was to the left before
-      ControlRobot("rotateLeft", g_lServoSpeed, g_rServoSpeed);
+  if(OptoLineDetectValue == 0 && event == evNone){ // while no line is detected
+    if(previousError<0){       //Turn left if the line was to the left before
+      ControlRobot("forward", 5, g_rServoSpeed); // Else turn left
     }
     else{
-      ControlRobot("rotateRight", g_lServoSpeed, g_rServoSpeed); // Else turn right
-  }}
+      ControlRobot("forward", g_lServoSpeed, 5); // Else turn right
+    } 
+    OptoLineDetectValue = OptoLineDetect();
+  } 
 
   PIDLineFollow(aioMonitorFeeds.position);
 
@@ -779,7 +804,7 @@ void RobotFollowLine(void){
  * Note:            None
  ******************************************************************************/
 void PIDLineFollow(float error){
-  Serial.print(error);
+  // Serial.print(error);
   P = error;
   I = I + error;
   D = error - previousError;
@@ -792,26 +817,26 @@ void PIDLineFollow(float error){
   Ivalue = aioControl.Ki*I;
   Dvalue = aioControl.Kd*D;
 
-  Serial.print("\t");
-  Serial.print(Pvalue);
-  Serial.print("\t");
-  Serial.print(Ivalue);
-  Serial.print("\t");
-  Serial.print(Dvalue);
+  // Serial.print("\t");
+  // Serial.print(Pvalue);
+  // Serial.print("\t");
+  // Serial.print(Ivalue);
+  // Serial.print("\t");
+  // Serial.print(Dvalue);
 
-  Serial.print("\t");
-  Serial.print(aioControl.Kp);
-  Serial.print("\t");
-  Serial.print(aioControl.Ki);
-  Serial.print("\t");
-  Serial.print(aioControl.Kd);
+  // Serial.print("\t");
+  // Serial.print(aioControl.Kp);
+  // Serial.print("\t");
+  // Serial.print(aioControl.Ki);
+  // Serial.print("\t");
+  // Serial.print(aioControl.Kd);
   
   float PIDvalue = Pvalue + Ivalue + Dvalue;
   previousError = error;
 
   Serial.print("\t");
   Serial.print(PIDvalue);
-  Serial.print("\n");
+  // Serial.print("\n");
   
   int lsp =  LEFT_SERVO_DEFAULT_STRAIGHT + PIDvalue;
   int rsp = RIGHT_SERVO_DEFAULT_STRAIGHT - PIDvalue;
@@ -821,6 +846,12 @@ void PIDLineFollow(float error){
   if (lsp < 0) lsp = 0;
   if (rsp > 90) rsp = 90;
   if (rsp < 0) rsp = 0;
+
+  Serial.print("\t");
+  Serial.print(lsp);
+  Serial.print("\t");
+  Serial.print(rsp);
+  Serial.print("\n");
 
   ControlRobot("forward", lsp, rsp);
 }
@@ -873,12 +904,19 @@ void ControlRobot(String action, float lServoSpeed, float rServoSpeed){
     g_lServoSpeed = LEFT_SERVO_DEFAULT_STRAIGHT; 
     g_rServoSpeed = RIGHT_SERVO_DEFAULT_STRAIGHT;
     ControlRobot("rotateRight", g_lServoSpeed, g_rServoSpeed); // begin a sharp turn
-    delay(50);                                    // ensure optos are not positioned over line                                      
+    delay(500); // wait for the turn to complete
+    // while(lineDetected){ // delay(250);                                    // ensure optos are not positioned over line                                      
+    //   if(OptoLineDetect() == 0){ // check if the line is detected
+    //     lineDetected = 0; // if not, exit the loop
+    //   }
+    // }
     while(!lineDetected){                           // maintain rotation until Left: 0, Middle: 1, Right: 0
-      if(OptoLineDetect() != 0){
+      if(OptoLineDetectValue != 0){
         lineDetected = 1;
       }
+      OptoLineDetectValue = OptoLineDetect();
     }
+    previousError = 0.1;                     // set previous error to a non-zero value
     // ControlRobot("stop");
   } else {
     // Invalid action
@@ -951,6 +989,14 @@ String serialMonitorDebug(void){
   String serialOutput;
   for (int i = 0; i < sensorCount; i++) {
     serialOutput += aioMonitorFeeds.sensorValues[i];
+    serialOutput += "\t";
+  }
+  serialOutput += "\t";
+  serialOutput += aioMonitorFeeds.position;
+  serialOutput += "\t";
+  serialOutput += "\t";
+  for (int i = 0; i < sensorCount; i++) {
+    serialOutput += aioMonitorFeeds.optoCal.threshold[i];
     serialOutput += "\t";
   }
 
