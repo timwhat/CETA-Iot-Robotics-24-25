@@ -779,6 +779,7 @@ void RobotFindTee(void){
   switch(OptoLineDetectValue){
     case -1:
       event = evFoundTee;       // Left, Middle & Right detect a line
+      aioMonitorFeeds.position = 0; // reset position
       break;
     default:
       event = evNone;
@@ -804,15 +805,15 @@ void RobotFindTee(void){
 void RobotFollowLine(void){
   RobotFindTee();
 
-  while(OptoLineDetectValue == 0 && event == evNone){ // while no line is detected
-    if(previousError<0){       //Turn left if the line was to the left before
-      ControlRobot("forward", 5, g_rServoSpeed); // Else turn left
-    }
-    else{
-      ControlRobot("forward", g_lServoSpeed, 5); // Else turn right
-    } 
-    OptoLineDetectValue = OptoLineDetect();
-  } 
+  // while(OptoLineDetectValue == 0 && event == evNone){ // while no line is detected
+  //   if(previousError<0){       //Turn left if the line was to the left before
+  //     ControlRobot("forward", 5, g_rServoSpeed+10); // Else turn left
+  //   }
+  //   else{
+  //     ControlRobot("forward", g_lServoSpeed + 10, 5); // Else turn right
+  //   } 
+  //   OptoLineDetectValue = OptoLineDetect();
+  // } 
 
   PIDLineFollow(aioMonitorFeeds.position);
 
@@ -871,12 +872,12 @@ void PIDLineFollow(float error){
   float PIDvalue = Pvalue + Ivalue + Dvalue;
   previousError = error;
 
-  Serial.print("\t");
-  Serial.print(PIDvalue);
+  // Serial.print("\t");
+  // Serial.print(PIDvalue);
   // Serial.print("\n");
   
-  int lsp =  LEFT_SERVO_DEFAULT_STRAIGHT + PIDvalue;
-  int rsp = RIGHT_SERVO_DEFAULT_STRAIGHT - PIDvalue;
+  int lsp =  LEFT_SERVO_DEFAULT_STRAIGHT - PIDvalue;
+  int rsp = RIGHT_SERVO_DEFAULT_STRAIGHT + PIDvalue;
 
   // change so drive right
   if (lsp > 90) lsp = 90;
@@ -953,10 +954,10 @@ void ControlRobot(String action, float lServoSpeed, float rServoSpeed){
     // Invalid action
     Serial.println("Invalid action");
   }
-  Serial.print("Left Servo: ");
-  Serial.print(lServoSpeed);
-  Serial.print("\tRight Servo: ");
-  Serial.println(rServoSpeed);
+  // Serial.print("Left Servo: ");
+  // Serial.print(lServoSpeed);
+  // Serial.print("\tRight Servo: ");
+  // Serial.println(rServoSpeed);
   // Serial.print("\n");
 }
 
@@ -1030,6 +1031,40 @@ String serialMonitorDebug(void){
   serialOutput += "\t";
   serialOutput += aioMonitorFeeds.position;
   serialOutput += "\t";
+  serialOutput += "\t";
+  serialOutput += aioMonitorFeeds.collisionDistance;
+  serialOutput += "\t";
+  switch (aioMonitorFeeds.robotState) {
+    case CALIBRATE:
+      serialOutput += "CALIBRATE";
+      break;
+    case CALIBRATE_BLACK:
+      serialOutput += "CALIBRATE_BLACK";
+      break;
+    case IDLE:
+      serialOutput += "IDLE";
+      break;
+    case SEEK_START:
+      serialOutput += "SEEK_START";
+      break;
+    case RUN1:
+      serialOutput += "RUN1";
+      break;
+    case RUN2:
+      serialOutput += "RUN2";
+      break;
+    case RUN3:
+      serialOutput += "RUN3";
+      break;
+    case RUN4:
+      serialOutput += "RUN4";
+      break;
+    default:
+      serialOutput += "UNKNOWN";
+      break;
+  }
+  serialOutput += "\t";
+  serialOutput += OptoLineDetectValue;
   serialOutput += "\t";
   for (int i = 0; i < sensorCount; i++) {
     serialOutput += aioMonitorFeeds.optoCal.threshold[i];
