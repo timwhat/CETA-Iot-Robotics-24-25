@@ -76,15 +76,18 @@ AIO_MONITOR_FEEDS aioMonitorFeeds;
 
 typedef struct {
   // PID VALS
-  double Kp;
-  double Ki;
-  double Kd;
+  float Kp;
+  float Ki;
+  float Kd;
+  int rightTurn;
 } AIO_CONTROL;
 
 AIO_CONTROL aioControl;
 
+bool firstTurnDirection = true; // true = right, false = left
+
 // Weights for each sensor
-int weights[sensorCount];
+// int weights[sensorCount];
 
 // PID STUFF
 uint8_t multiP = 1;
@@ -746,6 +749,12 @@ void RobotWait(void){
   // // Sample Optosensor Inputs at regular intervals - update Adafruit IO dashboard
   OptoLineDetect();
   
+  if (aioControl.rightTurn == 1) {
+    firstTurnDirection = true; // true = right, false = left
+  } else {
+    firstTurnDirection = false; // true = right, false = left
+  }
+
   // Look for Events
   SwitchTasks();                              // sample user switch
   if(SwitchWasPressed()){
@@ -941,7 +950,12 @@ void ControlRobot(String action, float lServoSpeed, float rServoSpeed){
     // rotate the robot 180 degrees via right-hand turn
     g_lServoSpeed = LEFT_SERVO_DEFAULT_STRAIGHT; 
     g_rServoSpeed = RIGHT_SERVO_DEFAULT_STRAIGHT;
-    ControlRobot("rotateRight", g_lServoSpeed, g_rServoSpeed); // begin a sharp turn
+    if (firstTurnDirection) {
+      ControlRobot("rotateLeft", g_lServoSpeed, g_rServoSpeed); // begin a sharp turn
+    } else {
+      ControlRobot("rotateRight", g_lServoSpeed, g_rServoSpeed); // begin a sharp turn
+    }
+    firstTurnDirection = !firstTurnDirection; // toggle the turn direction for the next turn
     delay(500); // wait for the turn to complete
     // while(lineDetected){ // delay(250);                                    // ensure optos are not positioned over line                                      
     //   if(OptoLineDetect() == 0){ // check if the line is detected
@@ -1220,6 +1234,9 @@ void eventDeserialize(void) {
         Serial.print("kd assigned: ");
         Serial.println(aioControl.Kd);
 
+        aioControl.rightTurn = doc["rightTurn"];  // Assign rightTurn
+        Serial.print("rightTurn assigned: ");
+        Serial.println(aioControl.rightTurn);
         // // Write the PID values to EEPROM (Flash memory)
         updateEEPROM(1);
     }
