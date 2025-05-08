@@ -76,9 +76,9 @@ AIO_MONITOR_FEEDS aioMonitorFeeds;
 
 typedef struct {
   // PID VALS
-  float Kp;
-  float Ki;
-  float Kd;
+  double Kp;
+  double Ki;
+  double Kd;
 } AIO_CONTROL;
 
 AIO_CONTROL aioControl;
@@ -99,7 +99,9 @@ float Dvalue;
 
 int val;//, cnt = 0, v[3];
 
-int P, I, D, previousError;//, PIDvalue;//, error;
+float P, I, D, previousError, PIDvalue;//, error;
+
+int lsp = 0, rsp = 0;
 
 // variables that control how often "aioMonitorFeeds" are published to the broker
 unsigned long aioMonitorFeedsCurrentSampleTime;
@@ -108,7 +110,7 @@ const long aioMonitorFeedsSampleInterval = 4000;   // "aioMonitorFeeds" update i
 
 unsigned long serialMonitorCurrentSampleTime;
 unsigned long serialMonitorPreviousSampleTime;
-const long serialMonitorSampleInterval = 750;   // Serial Monitor update interval (in mS)
+const long serialMonitorSampleInterval = 250;   // Serial Monitor update interval (in mS)
 
 // declare status message string to be published to Node-Red dashboard
 String robotMessage;
@@ -219,7 +221,7 @@ void loop() {
   if ((aioMonitorFeedsCurrentSampleTime - aioMonitorFeedsPreviousSampleTime) >= aioMonitorFeedsSampleInterval) {
     aioMonitorFeedsPreviousSampleTime = aioMonitorFeedsCurrentSampleTime;
     // send current values to the Dashboard
-    Serial.println(aioMonitorFeedsSerialize());
+    // Serial.println(aioMonitorFeedsSerialize());
     mqttcTx(PUB_TOPIC_AIO_MONITOR_FEEDS, aioMonitorFeedsSerialize());
   }
 
@@ -372,7 +374,7 @@ void OptoCalibrate(void) {
 
     for (i = 0; i < NUM_DIGITAL; i++) {
       // aioMonitorFeeds.optoCal.threshold[NUM_LEFT_ANALOG + i] = (qtrrc.calibrationOn.minimum[i] + qtrrc.calibrationOn.maximum[i])/2;
-      aioMonitorFeeds.optoCal.threshold[NUM_LEFT_ANALOG + i] = 980;  // Digital sensors
+      aioMonitorFeeds.optoCal.threshold[NUM_LEFT_ANALOG + i] = 525;  // Digital sensors
     }        
 
     // Read remaining analog sensors (right side) and place them into the final sensorValues array
@@ -581,17 +583,19 @@ int SwitchWasPressed(void){
 int OptoLineDetect(void) {
   aioMonitorFeeds.position = 3500 - qtrrc.readLineBlack(aioMonitorFeeds.sensorValues, QTRReadMode::On); // Read digital sensors with emitters on
 
-  int i, sumValues = 0;
+  int i, sumValuesTee = 0, sumValuesActualLine;
   // Check how many sensors detect the line
   for (i = 0; i < sensorCount; i++) {
       if (aioMonitorFeeds.sensorValues[i] >= aioMonitorFeeds.optoCal.threshold[i]) { // Sensor is active
-          sumValues++;
+          sumValuesTee++;
+      }
+      if (aioMonitorFeeds.sensorValues[i] >= 950) {
+          sumValuesActualLine++;
       }
   }
-  if (sumValues == sensorCount) return -1; // All digital sensors detect the line
-  else if (sumValues == 0) return 0;     // No sensors detect the line
-  else return 1; 
-  
+  if (sumValuesTee == sensorCount) return -1; // All digital sensors detect the line
+  else if (sumValuesActualLine > 1) return 1; 
+  else return 0;     // No sensors detect the line  
 }
 
 /*******************************************************************************
@@ -779,6 +783,7 @@ void RobotFindTee(void){
   switch(OptoLineDetect()){
     case -1:
       event = evFoundTee; 
+      // aioMonitorFeeds.position = -3500;
       break;
     default:
       event = evNone;
@@ -870,15 +875,15 @@ void PIDLineFollow(float error){
   Ivalue = (aioControl.Ki/pow(10,multiI))*I;
   Dvalue = (aioControl.Kd/pow(10,multiD))*D; 
 
-  float PIDvalue = Pvalue + Ivalue + Dvalue;
+  PIDvalue = Pvalue + Ivalue + Dvalue;
   previousError = error;
 
   // Serial.print("\t");
   // Serial.print(PIDvalue);
   // Serial.print("\n");
   
-  int lsp =  LEFT_SERVO_DEFAULT_STRAIGHT - PIDvalue;
-  int rsp = RIGHT_SERVO_DEFAULT_STRAIGHT + PIDvalue;
+  lsp =  LEFT_SERVO_DEFAULT_STRAIGHT - PIDvalue;
+  rsp = RIGHT_SERVO_DEFAULT_STRAIGHT + PIDvalue;
 
   // change so drive right
   if (lsp > 90) lsp = 90;
@@ -1033,8 +1038,22 @@ String serialMonitorDebug(void){
   serialOutput += aioMonitorFeeds.position;
   serialOutput += "\t";
   serialOutput += "\t";
-  serialOutput += aioMonitorFeeds.collisionDistance;
+  serialOutput += Pvalue;
   serialOutput += "\t";
+  serialOutput += Ivalue;
+  serialOutput += "\t";
+  serialOutput += Dvalue;
+  serialOutput += "\t";
+  serialOutput += PIDvalue;
+  serialOutput += "\t";
+  serialOutput += lsp;
+  serialOutput += "\t";
+  serialOutput += rsp;
+  serialOutput += "\t";
+
+  // serialOutput += "\t";
+  // serialOutput += aioMonitorFeeds.collisionDistance;
+  // serialOutput += "\t";
   switch (aioMonitorFeeds.robotState) {
     case CALIBRATE:
       serialOutput += "CALIBRATE";
@@ -1067,10 +1086,10 @@ String serialMonitorDebug(void){
   serialOutput += "\t";
   // serialOutput += OptoLineDetectValue;
   // serialOutput += "\t";
-  for (int i = 0; i < sensorCount; i++) {
-    serialOutput += aioMonitorFeeds.optoCal.threshold[i];
-    serialOutput += "\t";
-  }
+  // for (int i = 0; i < sensorCount; i++) {
+  //   serialOutput += aioMonitorFeeds.optoCal.threshold[i];
+  //   serialOutput += "\t";
+  // }
 
   return serialOutput;
 }
